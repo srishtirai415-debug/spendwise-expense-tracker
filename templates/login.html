@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in · SpendWise</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+  <div class="auth-wrap">
+    <aside class="auth-hero">
+      <div class="brand"><div class="brand-logo">💸</div> SpendWise</div>
+      <h2>Take control of your money.</h2>
+      <p>Track your income and expenses in one place and see exactly where your money goes each month.</p>
+      <ul>
+        <li><span>📊</span> Clear charts and monthly insights</li>
+        <li><span>💼</span> Track salary, freelance and other income</li>
+        <li><span>🔒</span> Private account, your data stays yours</li>
+      </ul>
+    </aside>
+
+    <main class="auth-panel">
+      <form class="auth-card" id="authForm" data-mode="login" novalidate>
+        <div class="brand auth-mobile-brand"><div class="brand-logo">💸</div> SpendWise</div>
+        <h1>Welcome back</h1>
+        <p class="lead">Log in to see your dashboard.</p>
+        <div class="form-error" id="error" role="alert"></div>
+        <div class="field">
+          <label for="email">Email</label>
+          <input type="email" id="email" autocomplete="email" placeholder="you@example.com" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <div class="pw-wrap">
+            <input type="password" id="password" autocomplete="current-password" placeholder="Your password" required>
+            <button type="button" class="pw-toggle" data-target="password">Show</button>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" id="submitBtn">Log in</button>
+        <p class="auth-switch">New here? <a href="/register">Create an account</a></p>
+      </form>
+    </main>
+  </div>
+  <script src="/static/js/auth.js"></script>
+</body>
+</html>
