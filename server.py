@@ -11,7 +11,21 @@ from flask import Flask, g, jsonify, redirect, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# If DATABASE_URL (or POSTGRES_URL) is set, the app uses Postgres (e.g. Neon on Vercel).
+# Otherwise it uses a local SQLite file, exactly as before.
+DATABASE_URL = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or ""
+USE_PG = bool(DATABASE_URL)
 DB_PATH = os.environ.get("EXPENSE_DB", os.path.join(BASE_DIR, "expenses.db"))
+TIE_BREAK = "seq" if USE_PG else "rowid"  # keeps same-day entries in insertion order
+
+if USE_PG:
+    import psycopg
+    from psycopg.rows import dict_row
+
+    INTEGRITY_ERRORS = (psycopg.IntegrityError,)
+else:
+    INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
 
 CATEGORIES = {
     "Expense": ["Food", "Transport", "Bills", "Rent", "Shopping", "Health", "Education", "Entertainment", "Other"],
@@ -23,21 +37,23 @@ MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-# def load_secret_key():
-#     """Use SECRET_KEY from the environment, otherwise create one once and keep it in secret.key."""
-#     env_key = os.environ.get("SECRET_KEY")
-#     if env_key:
-#         return env_key
-#     path = os.path.join(BASE_DIR, "secret.key")
-#     if os.path.exists(path):
-#         with open(path) as f:
-#             return f.read().strip()
-#     key = secrets.token_hex(32)
-#     with open(path, "w") as f:
-#         f.write(key)
-#     return key
 def load_secret_key():
-    return os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+    """Use SECRET_KEY from the environment. Otherwise keep a generated key in secret.key.
+    On read-only hosts (like Vercel) fall back to a temporary key."""
+    env_key = os.environ.get("SECRET_KEY")
+    if env_key:
+        return env_key
+    path = os.path.join(BASE_DIR, "secret.key")
+    try:
+        if os.path.exists(path):
+            with open(path) as f:
+                return f.read().strip()
+        key = secrets.token_hex(32)
+        with open(path, "w") as f:
+            f.write(key)
+        return key
+    except OSError:
+        return secrets.token_hex(32)  # temporary: set SECRET_KEY in production!
 
 
 app = Flask(__name__)
@@ -49,12 +65,47 @@ app.config.update(
 )
 
 
-# ---------------------------------------------------------------- database
+# ---------------------------------------------------------------- database layer
+_NAMED_PARAM = re.compile(r"(?<![:\w]):(\w+)")
+
+
+def to_pg(sql):
+    """Convert SQLite-style placeholders (? and :name) to Postgres style (%s and %(name)s)."""
+    return _NAMED_PARAM.sub(r"%(\1)s", sql.replace("?", "%s"))
+
+
+class Database:
+    """Small wrapper so the rest of the code works the same on SQLite and Postgres."""
+
+    def __init__(self):
+        if USE_PG:
+            # prepare_threshold=None keeps it compatible with Neon's pooled connection
+            self.conn = psycopg.connect(DATABASE_URL, row_factory=dict_row, prepare_threshold=None)
+        else:
+            self.conn = sqlite3.connect(DB_PATH)
+            self.conn.row_factory = sqlite3.Row
+            self.conn.execute("PRAGMA foreign_keys = ON")
+
+    def execute(self, sql, params=()):
+        if USE_PG:
+            cur = self.conn.cursor()
+            cur.execute(to_pg(sql), params)
+            return cur
+        return self.conn.execute(sql, params)
+
+    def commit(self):
+        self.conn.commit()
+
+    def rollback(self):
+        self.conn.rollback()
+
+    def close(self):
+        self.conn.close()
+
+
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        g.db = Database()
     return g.db
 
 
@@ -65,29 +116,59 @@ def close_db(_exc):
         db.close()
 
 
+SCHEMA_SQLITE = [
+    """CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""",
+    """CREATE TABLE IF NOT EXISTS transactions (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL CHECK (type IN ('Expense', 'Income')),
+        title TEXT NOT NULL,
+        amount REAL NOT NULL CHECK (amount > 0),
+        category TEXT NOT NULL,
+        date TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_tx_user_date ON transactions(user_id, date)",
+]
+
+SCHEMA_PG = [
+    """CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""",
+    """CREATE TABLE IF NOT EXISTS transactions (
+        id TEXT PRIMARY KEY,
+        seq BIGSERIAL,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL CHECK (type IN ('Expense', 'Income')),
+        title TEXT NOT NULL,
+        amount DOUBLE PRECISION NOT NULL CHECK (amount > 0),
+        category TEXT NOT NULL,
+        date TEXT NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_tx_user_date ON transactions(user_id, date)",
+]
+
+
 def init_db():
-    with sqlite3.connect(DB_PATH) as db:
-        db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS transactions (
-                id TEXT PRIMARY KEY,
-                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                type TEXT NOT NULL CHECK (type IN ('Expense', 'Income')),
-                title TEXT NOT NULL,
-                amount REAL NOT NULL CHECK (amount > 0),
-                category TEXT NOT NULL,
-                date TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_tx_user_date ON transactions(user_id, date);
-            """
-        )
+    db = Database()
+    try:
+        if USE_PG:
+            # lock so two cold starts at the same moment do not clash while creating tables
+            db.execute("SELECT pg_advisory_xact_lock(7364201)")
+        for stmt in SCHEMA_PG if USE_PG else SCHEMA_SQLITE:
+            db.execute(stmt)
+        db.commit()
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------- helpers
@@ -206,18 +287,28 @@ def register():
     if not 8 <= len(password) <= 128:
         return jsonify(error="Password must be at least 8 characters"), 400
     db = get_db()
+    pw_hash = generate_password_hash(password)
     try:
-        cur = db.execute(
-            "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
-            (name, email, generate_password_hash(password)),
-        )
+        if USE_PG:
+            cur = db.execute(
+                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                (name, email, pw_hash),
+            )
+            user_id = cur.fetchone()["id"]
+        else:
+            cur = db.execute(
+                "INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)",
+                (name, email, pw_hash),
+            )
+            user_id = cur.lastrowid
         db.commit()
-    except sqlite3.IntegrityError:
+    except INTEGRITY_ERRORS:
+        db.rollback()
         return jsonify(error="An account with this email already exists"), 409
     session.clear()
-    session["user_id"] = cur.lastrowid
+    session["user_id"] = user_id
     session.permanent = True
-    return jsonify(id=cur.lastrowid, name=name, email=email), 201
+    return jsonify(id=user_id, name=name, email=email), 201
 
 
 @app.post("/api/login")
@@ -287,7 +378,7 @@ def list_transactions():
         escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         sql += " AND title LIKE ? ESCAPE '\\'"
         params.append(f"%{escaped}%")
-    sql += " ORDER BY date DESC, rowid DESC"
+    sql += f" ORDER BY date DESC, {TIE_BREAK} DESC"
     rows = get_db().execute(sql, params).fetchall()
     return jsonify([dict(r) for r in rows])
 
@@ -368,7 +459,7 @@ def stats():
     series = {k: {"month": k, "income": 0.0, "expense": 0.0} for k in months}
     for r in db.execute(
         "SELECT substr(date, 1, 7) AS m, type, SUM(amount) AS t FROM transactions "
-        "WHERE user_id = ? AND substr(date, 1, 7) >= ? GROUP BY m, type",
+        "WHERE user_id = ? AND substr(date, 1, 7) >= ? GROUP BY substr(date, 1, 7), type",
         (uid, months[0]),
     ):
         if r["m"] in series:

@@ -22,6 +22,15 @@ The charts use Chart.js loaded from a CDN, so you need an internet connection fo
 
 Optional environment variables: `PORT` (default 5000), `EXPENSE_DB` (SQLite file path), `SECRET_KEY` (session signing key; if not set, one is created in `secret.key`).
 
+## Databases
+- **Local (default):** SQLite file `expenses.db`, nothing to configure.
+- **Postgres:** if the environment variable `DATABASE_URL` is set, the app uses Postgres instead (tables are created automatically). This is what you need on Vercel, where files cannot be saved.
+
+### Deploy on Vercel with Neon
+1. In your Vercel project open **Storage**, create a **Neon** Postgres database and connect it to the project. Vercel adds `DATABASE_URL` automatically.
+2. Add the environment variable `SECRET_KEY` (a long random text).
+3. Push to GitHub and redeploy.
+
 ## Project structure
 ```
 server.py            Flask app, database and API
