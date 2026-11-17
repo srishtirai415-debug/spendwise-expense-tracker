@@ -167,13 +167,30 @@ tbody tr:hover { background: #fafaff; }
 @media (max-width: 960px) {
   .stats { grid-template-columns: repeat(2, 1fr); }
   .grid-2 { grid-template-columns: 1fr; }
+
 }
-@media (max-width: 860px) {
-  .auth-wrap { grid-template-columns: 1fr; }
-  .auth-hero { display: none; }
+
+@media (max-width: 1024px) {
+  .auth-wrap { grid-template-columns: 1fr; min-height: 0; }
+
+  /* form on top, gradient section below */
+  .auth-panel { order: 1; padding: 40px 20px; }
+  .auth-hero  {
+    order: 2;
+    padding: 40px 24px;
+    align-items: center;   /* centers the blocks horizontally */
+    text-align: center;    /* centers the heading and paragraph text */
+  }
+
+  /* the logo is already shown above the form, so hide the duplicate */
+  .auth-hero .brand { display: none; }
+  .auth-hero h2 { font-size: 28px; }
+  .auth-hero ul { justify-items: center; }
   .auth-mobile-brand { display: flex; }
 }
+
 @media (max-width: 520px) {
   .stats { grid-template-columns: 1fr; }
   .user-meta { display: none; }
+
 }
