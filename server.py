@@ -23,19 +23,21 @@ MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
+# def load_secret_key():
+#     """Use SECRET_KEY from the environment, otherwise create one once and keep it in secret.key."""
+#     env_key = os.environ.get("SECRET_KEY")
+#     if env_key:
+#         return env_key
+#     path = os.path.join(BASE_DIR, "secret.key")
+#     if os.path.exists(path):
+#         with open(path) as f:
+#             return f.read().strip()
+#     key = secrets.token_hex(32)
+#     with open(path, "w") as f:
+#         f.write(key)
+#     return key
 def load_secret_key():
-    """Use SECRET_KEY from the environment, otherwise create one once and keep it in secret.key."""
-    env_key = os.environ.get("SECRET_KEY")
-    if env_key:
-        return env_key
-    path = os.path.join(BASE_DIR, "secret.key")
-    if os.path.exists(path):
-        with open(path) as f:
-            return f.read().strip()
-    key = secrets.token_hex(32)
-    with open(path, "w") as f:
-        f.write(key)
-    return key
+    return os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
 
 app = Flask(__name__)
